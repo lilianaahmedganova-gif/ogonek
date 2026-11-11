@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="ru"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Огонёк</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+:root{--a:#ff9a1f;--b:#ff5a1f;--c:#e02a1f;--i1:#fff2a8;--i2:#ffb62e}
+body.cold{--a:#d6f1ff;--b:#6bb6ff;--c:#2f66d6;--i1:#fff;--i2:#b5dcff}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:radial-gradient(120% 90% at 50% 55%,#3a1a5e,#120a24);color:#fff;font-family:system-ui,-apple-system,sans-serif;overflow:hidden;text-align:center}
+body.cold{background:radial-gradient(120% 90% at 50% 55%,#173a63,#07101f)}
+#top{position:absolute;top:calc(env(safe-area-inset-top,0px) + 14px);left:0;right:0;font-size:22px;font-weight:700}
+#stage{position:absolute;left:50%;top:38%;transform:translate(-50%,-50%) scale(var(--s,1));transition:transform .6s}
+svg{height:34vh;width:auto;display:block;transform-origin:50% 100%;animation:fl 1.6s ease-in-out infinite alternate}
+@keyframes fl{to{transform:scale(1.03,1.06) skewX(-1.5deg)}}
+@media (prefers-reduced-motion:reduce){svg{animation:none}}
+.ghost svg{opacity:.22;filter:grayscale(.6);animation:none}
+.dead svg{filter:grayscale(1) brightness(.5);animation:none}
+.dead .sm{transform:scaleY(-1);transform-box:fill-box;transform-origin:center}
+#ui{position:absolute;left:0;right:0;top:62%;padding:0 24px}
+h1{font-size:21px;margin:0 0 6px}
+p{margin:0 0 14px;opacity:.8;font-size:15px;line-height:1.35}
+button{display:block;width:100%;max-width:320px;margin:8px auto 0;padding:14px;border:0;border-radius:14px;font-size:17px;font-weight:700;color:#2a0f00;background:linear-gradient(#ffc14d,#ff8a1f)}
+button.s{background:rgba(255,255,255,.14);color:#fff}
+button:disabled{opacity:.4}
+button:focus-visible{outline:3px solid #fff}
+</style></head>
+<body>
+<div id="top"></div>
+<div id="stage"><svg viewBox="110 50 290 400">
+<defs>
+<linearGradient id="g1" x1="0" y1="0" x2="0" y2="1"><stop offset="0" style="stop-color:var(--a)"/><stop offset=".6" style="stop-color:var(--b)"/><stop offset="1" style="stop-color:var(--c)"/></linearGradient>
+<linearGradient id="g2" x1="0" y1="0" x2="0" y2="1"><stop offset="0" style="stop-color:var(--i1)"/><stop offset="1" style="stop-color:var(--i2)"/></linearGradient>
+</defs>
+<path fill="url(#g1)" d="M256 60C270 130 350 160 372 250C392 330 340 430 256 440C172 430 120 330 140 250C156 190 205 170 222 120C232 150 246 150 256 60Z"/>
+<path fill="url(#g2)" d="M256 190C266 235 316 258 324 316C332 372 296 416 256 420C216 416 180 372 188 316C196 270 240 250 256 190Z"/>
+<g fill="#3a1205"><ellipse cx="228" cy="330" rx="12" ry="16"/><ellipse cx="284" cy="330" rx="12" ry="16"/></g>
+<g fill="#ff7a5a" opacity=".6"><circle cx="206" cy="358" r="10"/><circle cx="306" cy="358" r="10"/></g>
+<path class="sm" d="M236 362Q256 382 276 362" fill="none" stroke="#3a1205" stroke-width="7" stroke-linecap="round"/>
+</svg></div>
+<div id="ui"><h1 id="h"></h1><p id="p"></p><button id="b1"></button><button id="b2" class="s"></button></div>
+
+<script type="module">
+import {initializeApp} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
+import {getFirestore,doc,getDoc,setDoc,runTransaction,onSnapshot} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+
+// ВСТАВЬ юзернейм бота (без @). APP оставь пустым, пока не сделал /newapp
+const BOT="My_oglnek_tg_bot", APP="flame";
+
+const db=getFirestore(initializeApp({
+  apiKey:"AIzaSyB4eSAaCba0gcjIZz_MPWW1dnP6epKWhRQ",
+  authDomain:"ogonek-e1758.firebaseapp.com",
+  projectId:"ogonek-e1758",
+  storageBucket:"ogonek-e1758.firebasestorage.app",
+  messagingSenderId:"150251028325",
+  appId:"1:150251028325:web:9b0808bde454d8e4166b8c"
+}));
+
+const tg=window.Telegram&&window.Telegram.WebApp;
+if(tg){tg.ready();tg.expand();try{tg.setHeaderColor("#120a24");tg.setBackgroundColor("#120a24")}catch(e){}}
+const tu=tg&&tg.initDataUnsafe&&tg.initDataUnsafe.user;
+let uid=tu?String(tu.id):null;
+if(!uid){try{uid=localStorage.dev=localStorage.dev||"dev"+Math.random().toString(36).slice(2,8)}catch(e){uid="dev"+Math.random().toString(36).slice(2,8)}}
+const myName=(tu&&tu.first_name)||"Игрок";
+const code=(tg&&tg.initDataUnsafe&&tg.initDataUnsafe.start_param)||new URLSearchParams(location.search).get("c");
+
+// Время по Москве (UTC+3, без перехода на летнее)
+const M=3*36e5;
+const dayStr=t=>new Date(t+M).toISOString().slice(0,10);
+const startOf=d=>Date.parse(d+"T00:00:00Z")-M;
+const nextDay=d=>dayStr(startOf(d)+864e5);
+
+function settle(f,now){
+  const today=dayStr(now);
+  if(f.members.length<2)return{...f,needDay:today,fed:{},status:"wait"};
+  let needDay=f.needDay,fed={...f.fed},streak=f.streak;
+  const full=()=>f.members.every(m=>fed[m]);
+  for(;;){
+    if(needDay>=today)return{...f,needDay,fed,streak,status:full()?"done":"hungry"};
+    if(full()){needDay=nextDay(needDay);fed={};continue}
+    if(now<startOf(nextDay(needDay))+9*36e5)return{...f,needDay,fed,streak,status:"frozen"};
+    return{...f,needDay,fed,streak:0,status:"dead"};
+  }
+}
+
+const $=id=>document.getElementById(id);
+let F=null,fid=null,act=null,act2=null,msg="",busy=false;
+const link=()=>`https://t.me/${BOT}${APP?"/"+APP:""}?startapp=${fid}`;
+const fmt=ms=>{const s=Math.floor(Math.max(0,ms)/1000);return[s/3600|0,(s/60|0)%60,s%60].map(x=>String(x).padStart(2,"0")).join(":")};
+function set(h,p,b1,a1,b2,a2){
+  $("h").textContent=h;$("p").textContent=p;
+  const x=$("b1"),y=$("b2");
+  x.textContent=b1||"";x.style.display=b1?"":"none";x.disabled=!a1;act=a1;
+  y.textContent=b2||"";y.style.display=b2?"":"none";act2=a2;
+}
+
+function draw(){
+  const now=Date.now(),st=$("stage");
+  st.className="";document.body.className="";st.style.setProperty("--s",1);
+  if(!F){
+    st.className="ghost";$("top").textContent="";
+    return set("У тебя пока нет огонька",msg||"Огонёк живёт вдвоём: пригласи друга и кормите его каждый день. Если кто-то забудет, огонёк погаснет.","Создать и пригласить друга",create);
+  }
+  const s=settle(F,now),other=s.members.find(m=>m!==uid);
+  const on=(s.names&&s.names[other])||"друг";
+  $("top").textContent="🔥 "+s.streak;
+  st.style.setProperty("--s",1+Math.min(s.streak,30)/30*.25);
+  const left=startOf(nextDay(dayStr(now)))-now;
+  if(s.status==="wait"){st.className="ghost";return set("Ждём друга","Отправь ссылку-приглашение. Как только друг зайдёт, огонёк загорится.","Пригласить друга",share,"Скопировать ссылку",copy)}
+  if(s.status==="dead"){st.className="dead";return set("Огонёк погас 💔","Серия сбросилась (была "+F.streak+"). Зажгите его заново.","Зажечь заново",relight)}
+  if(s.status==="frozen"){
+    document.body.className="cold";
+    const dl=startOf(nextDay(s.needDay))+9*36e5-now;
+    return s.fed[uid]
+      ?set("Огонёк замёрз ❄️",on+" не покормил. Осталось "+fmt(dl)+" до 09:00 МСК, иначе серия сбросится.")
+      :set("Огонёк замёрз ❄️","Покорми его до 09:00 МСК, осталось "+fmt(dl)+", иначе серия сбросится.","Спасти огонёк ❄️",feed);
+  }
+  if(s.status==="done")return set("Сегодня вы оба покормили ✅","Огонёк доволен. Следующее кормление после 00:00 МСК, через "+fmt(left)+".");
+  if(s.fed[uid])return set("Ты покормил ✅","Ждём, пока "+on+" покормит огонёк. До 00:00 МСК: "+fmt(left)+".");
+  set("Огонёк голодный","До 00:00 МСК: "+fmt(left)+(s.fed[other]?". "+on+" уже покормил!":""),"Покормить 🪵",feed);
+}
+
+async function create(){
+  fid=Math.random().toString(36).slice(2,10);
+  await setDoc(doc(db,"flames",fid),{members:[uid],names:{[uid]:myName},needDay:dayStr(Date.now()),fed:{},streak:0});
+  await setDoc(doc(db,"users",uid),{fid});
+  watch();
+}
+async function feed(){
+  await runTransaction(db,async tx=>{
+    const r=doc(db,"flames",fid),s=await tx.get(r),f=settle(s.data(),Date.now());
+    if((f.status!=="hungry"&&f.status!=="frozen")||f.fed[uid])return;
+    f.fed[uid]=true;
+    const done=f.members.every(m=>f.fed[m]);
+    tx.update(r,{needDay:f.needDay,fed:f.fed,streak:f.streak+(done?1:0)});
+  });
+}
+async function relight(){
+  await runTransaction(db,async tx=>{
+    const r=doc(db,"flames",fid),s=await tx.get(r);
+    if(settle(s.data(),Date.now()).status!=="dead")return;
+    tx.update(r,{streak:0,needDay:dayStr(Date.now()),fed:{}});
+  });
+}
+async function join(c){
+  await runTransaction(db,async tx=>{
+    const r=doc(db,"flames",c),s=await tx.get(r);
+    if(!s.exists())throw"nf";
+    const f=s.data();
+    if(!f.members.includes(uid)){
+      if(f.members.length>=2)throw"full";
+      tx.update(r,{members:[...f.members,uid],["names."+uid]:myName,needDay:dayStr(Date.now()),fed:{}});
+    }
+    tx.set(doc(db,"users",uid),{fid:c});
+  });
+  return c;
+}
+function share(){
+  const u="https://t.me/share/url?url="+encodeURIComponent(link())+"&text="+encodeURIComponent("Давай кормить огонёк вместе 🔥");
+  tg&&tg.openTelegramLink?tg.openTelegramLink(u):window.open(u,"_blank");
+}
+async function copy(){
+  try{await navigator.clipboard.writeText(link());$("b2").textContent="Скопировано ✅"}
+  catch(e){prompt("Скопируй ссылку",link())}
+}
+function watch(){
+  onSnapshot(doc(db,"flames",fid),s=>{F=s.exists()?s.data():null;draw()});
+}
+async function run(fn){
+  if(busy||!fn)return;busy=true;
+  try{await fn()}catch(e){msg="Не получилось, проверь интернет и попробуй ещё раз.";if(!F)draw()}
+  busy=false;
+}
+$("b1").onclick=()=>run(act);
+$("b2").onclick=()=>run(act2);
+
+(async()=>{
+  draw();
+  try{
+    const us=await getDoc(doc(db,"users",uid));
+    fid=us.exists()?us.data().fid:null;
+    if(!fid&&code){
+      try{fid=await join(code)}
+      catch(e){msg=e==="full"?"Этот огонёк уже занят двумя людьми.":e==="nf"?"Ссылка не найдена. Попроси друга прислать новую.":"Не удалось присоединиться."}
+    }
+    if(fid)watch();else draw();
+  }catch(e){msg="Нет связи с базой. Попробуй позже.";draw()}
+  setInterval(draw,1000);
+})();
+</script>
+</body></html>
